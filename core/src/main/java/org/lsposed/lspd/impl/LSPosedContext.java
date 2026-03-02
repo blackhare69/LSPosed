@@ -13,13 +13,14 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.lsposed.lspd.core.BuildConfig;
-import org.lsposed.lspd.impl.utils.LSPosedDexParser;
 import org.lsposed.lspd.models.Module;
 import org.lsposed.lspd.nativebridge.HookBridge;
 import org.lsposed.lspd.nativebridge.NativeAPI;
 import org.lsposed.lspd.service.ILSPInjectedModuleService;
 import org.lsposed.lspd.util.LspModuleClassLoader;
 import org.lsposed.lspd.util.Utils.Log;
+
+import org.matrix.vector.impl.utils.VectorDexParser;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -188,6 +189,27 @@ public class LSPosedContext implements XposedInterface {
         return LSPosedBridge.doHook(origin, priority, hooker);
     }
 
+    @Override
+    @NonNull
+    public <T> MethodUnhooker<Constructor<T>> hookClassInitializer(@NonNull Class<T> origin, @NonNull Class<? extends Hooker> hooker) {
+        return hookClassInitializer(origin, PRIORITY_DEFAULT, hooker);
+    }
+
+    @Override
+    @NonNull
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    public <T> MethodUnhooker<Constructor<T>> hookClassInitializer(@NonNull Class<T> origin, int priority, @NonNull Class<? extends Hooker> hooker) {
+        Method staticInitializer = HookBridge.getStaticInitializer(origin);
+
+        // The class might not have a static initializer block
+        if (staticInitializer == null) {
+            throw new IllegalArgumentException("Class " + origin.getName() + " has no static initializer");
+        }
+
+        // Use the existing doHook logic. It will return a MethodUnhooker<Method>.
+        return (MethodUnhooker) LSPosedBridge.doHook(staticInitializer, priority, hooker);
+    }
+
     private static boolean doDeoptimize(@NonNull Executable method) {
         if (Modifier.isAbstract(method.getModifiers())) {
             throw new IllegalArgumentException("Cannot deoptimize abstract methods: " + method);
@@ -209,8 +231,14 @@ public class LSPosedContext implements XposedInterface {
 
     @Nullable
     @Override
-    public Object invokeOrigin(@NonNull Method method, @Nullable Object thisObject, Object[] args) throws InvocationTargetException, IllegalArgumentException, IllegalAccessException {
+    public Object invokeOrigin(@NonNull Method method, @Nullable Object thisObject, Object... args) throws InvocationTargetException, IllegalArgumentException, IllegalAccessException {
         return HookBridge.invokeOriginalMethod(method, thisObject, args);
+    }
+
+    @Override
+    public <T> void invokeOrigin(@NonNull Constructor<T> constructor, @NonNull T thisObject, Object... args) throws InvocationTargetException, IllegalArgumentException, IllegalAccessException {
+        // The bridge returns an Object (null for void/constructors), which we discard.
+        HookBridge.invokeOriginalMethod(constructor, thisObject, args);
     }
 
     private static char getTypeShorty(Class<?> type) {
@@ -256,6 +284,11 @@ public class LSPosedContext implements XposedInterface {
         return HookBridge.invokeSpecialMethod(method, getExecutableShorty(method), method.getDeclaringClass(), thisObject, args);
     }
 
+    @Override
+    public <T> void invokeSpecial(@NonNull Constructor<T> constructor, @NonNull T thisObject, Object... args) throws InvocationTargetException, IllegalArgumentException, IllegalAccessException {
+        HookBridge.invokeSpecialMethod(constructor, getExecutableShorty(constructor), constructor.getDeclaringClass(), thisObject, args);
+    }
+
     @NonNull
     @Override
     public <T> T newInstanceOrigin(@NonNull Constructor<T> constructor, Object... args) throws InvocationTargetException, IllegalAccessException, InstantiationException {
@@ -288,7 +321,7 @@ public class LSPosedContext implements XposedInterface {
 
     @Override
     public DexParser parseDex(@NonNull ByteBuffer dexData, boolean includeAnnotations) throws IOException {
-        return new LSPosedDexParser(dexData, includeAnnotations);
+        return new VectorDexParser(dexData, includeAnnotations);
     }
 
     @NonNull
